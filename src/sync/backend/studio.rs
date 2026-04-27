@@ -1,15 +1,16 @@
 use super::{AssetRef, Backend};
 use crate::{
     asset::{Asset, AssetType},
+    hash::Hash,
     lockfile::LockfileEntry,
     sync::backend::Params,
 };
 use anyhow::Context;
 use fs_err::tokio as fs;
-use log::{info, warn};
+use log::{debug, info, warn};
 use relative_path::RelativePathBuf;
 use roblox_install::RobloxStudio;
-use std::{env, path::PathBuf};
+use std::{collections::HashSet, env, path::PathBuf};
 
 pub struct Studio {
     identifier: String,
@@ -82,5 +83,39 @@ impl Backend for Studio {
             "{}/{}",
             self.identifier, rel_target_path
         ))))
+    }
+}
+
+impl Studio {
+    /// Reconstruct an `AssetRef` for a previously-synced hash without re-syncing.
+    pub fn ref_for_hash(&self, hash: &Hash, ext: &str) -> AssetRef {
+        let rel = RelativePathBuf::from(&hash.to_string()).with_extension(ext);
+        AssetRef::Studio(format!("{}/{}", self.identifier, rel))
+    }
+
+    /// Remove files from the sync folder whose hash is no longer referenced.
+    pub async fn clean_orphans(&self, valid_hashes: &HashSet<Hash>) -> anyhow::Result<()> {
+        let Ok(mut entries) = tokio::fs::read_dir(&self.sync_path).await else {
+            return Ok(());
+        };
+
+        let valid_stems: HashSet<String> = valid_hashes.iter().map(|h| h.to_string()).collect();
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            if !valid_stems.contains(stem) {
+                debug!("Removing orphaned file: {}", path.display());
+                let _ = tokio::fs::remove_file(&path).await;
+            }
+        }
+
+        Ok(())
     }
 }
