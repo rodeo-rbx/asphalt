@@ -1,7 +1,7 @@
 use crate::{
     asset::{self, Asset, AssetRef},
     cli::{SyncArgs, SyncTarget},
-    config::Config,
+    config::{Config, Input},
     hash::Hash,
     lockfile::{LockfileEntry, RawLockfile},
     sync::{backend::Backend, collect::collect_events},
@@ -14,7 +14,7 @@ use relative_path::{PathExt, RelativePathBuf};
 use resvg::usvg::fontdb;
 use std::{
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -163,7 +163,7 @@ async fn run_initial_sync(
             .get(&input_name)
             .context("Failed to find input for codegen input")?;
 
-        write_codegen(config, &input_name, &source, &input.output_path, true).await?;
+        write_codegen(config, &input_name, &source, input, true).await?;
     }
 
     if results.any_failed {
@@ -178,7 +178,7 @@ async fn write_codegen(
     config: &Config,
     input_name: &str,
     source: &codegen::NodeSource,
-    output_path: &Path,
+    input: &Input,
     always_write: bool,
 ) -> anyhow::Result<()> {
     let mut langs = vec![codegen::Language::Luau];
@@ -186,8 +186,9 @@ async fn write_codegen(
         langs.push(codegen::Language::TypeScript);
     }
 
-    let abs_output = config.project_dir.join(output_path);
+    let abs_output = config.project_dir.join(&input.output_path);
     fs::create_dir_all(&abs_output).await?;
+    let base_name = input.output_basename.as_deref().unwrap_or(input_name);
 
     for lang in langs {
         let node = codegen::create_node(source, &config.codegen);
@@ -196,7 +197,7 @@ async fn write_codegen(
             codegen::Language::TypeScript => "d.ts",
         };
         let code = codegen::generate_code(lang, input_name, &node)?;
-        let file_path = abs_output.join(format!("{input_name}.{ext}"));
+        let file_path = abs_output.join(format!("{base_name}.{ext}"));
 
         if always_write {
             fs::write(&file_path, code).await?;
@@ -394,7 +395,7 @@ async fn studio_watch_loop(
                 }
             }
 
-            write_codegen(&config, input_name, &source, &input.output_path, false).await?;
+            write_codegen(&config, input_name, &source, input, false).await?;
         }
 
         prev_state = current_state;
