@@ -64,7 +64,7 @@ impl SyncTarget {
 #[derive(Args, Clone)]
 pub struct SyncArgs {
     /// Your Open Cloud API key.
-    #[arg(short, long, env = "ASPHALT_API_KEY")]
+    #[arg(short, long, env = "ASPHALT_API_KEY", hide_env_values = true)]
     pub api_key: Option<String>,
 
     /// Where Asphalt should sync assets to.
