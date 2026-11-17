@@ -21,3 +21,7 @@ pr-run-mode = "skip"
 checksum = "false"
 # Generate and dist a source tarball
 source-tarball = false
+
+[dist.github-custom-runners]
+# dist 0.31.0 defaults this target to macos-14, which GitHub no longer accepts.
+aarch64-apple-darwin = "macos-15"
