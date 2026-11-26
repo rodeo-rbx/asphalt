@@ -1,5 +1,5 @@
 use crate::{
-    asset::{self, Asset, AssetRef},
+    asset::{self, Asset, AssetRef, AssetType},
     cli::{SyncArgs, SyncTarget},
     config::{Config, Input},
     hash::Hash,
@@ -220,6 +220,7 @@ struct FileEntry {
     input_name: String,
     rel_path: RelativePathBuf,
     ext: String,
+    ty: AssetType,
 }
 
 type FileState = HashMap<PathBuf, FileEntry>;
@@ -271,6 +272,7 @@ async fn scan_all_inputs(config: &Config) -> anyhow::Result<FileState> {
                     input_name: input_name.clone(),
                     rel_path,
                     ext: ext_str,
+                    ty: asset.ty,
                 },
             );
         }
@@ -345,6 +347,19 @@ async fn studio_watch_loop(
             if any_removed { ", some removed" } else { "" }
         );
 
+        // Models and animations are referenced by their uploaded asset, so they are looked up in
+        // the lockfile, which a cloud sync may have updated since the last pass.
+        let lockfile = match RawLockfile::read_from(&project_dir)
+            .await
+            .and_then(RawLockfile::into_lockfile)
+        {
+            Ok(lockfile) => lockfile,
+            Err(e) => {
+                warn!("Failed to read lockfile: {e:?}");
+                continue;
+            }
+        };
+
         // Process only changed/added files
         for path in &added_or_changed {
             let entry = &current_state[path];
@@ -367,7 +382,9 @@ async fn studio_watch_loop(
             .await?
             .context("Failed to process asset")?;
 
-            studio.sync(&asset, None).await?;
+            studio
+                .sync(&asset, lockfile.get(&entry.input_name, &asset.hash))
+                .await?;
         }
 
         // Clean orphans if files were removed
@@ -387,11 +404,15 @@ async fn studio_watch_loop(
                 source.insert(rel_path.clone(), AssetRef::Cloud(web.id));
             }
             for entry in current_state.values() {
-                if entry.input_name == *input_name {
-                    source.insert(
-                        entry.rel_path.clone(),
-                        studio.ref_for_hash(&entry.hash, &entry.ext),
-                    );
+                if entry.input_name != *input_name {
+                    continue;
+                }
+
+                let lockfile_entry = lockfile.get(input_name, &entry.hash);
+                if let Some(asset_ref) =
+                    studio.ref_for(entry.ty, &entry.hash, &entry.ext, lockfile_entry)
+                {
+                    source.insert(entry.rel_path.clone(), asset_ref);
                 }
             }
 

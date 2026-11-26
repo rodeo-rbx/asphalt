@@ -87,6 +87,23 @@ impl Backend for Studio {
 }
 
 impl Studio {
+    /// What generated code should hold for a file during a Studio sync, without re-syncing it:
+    /// the local copy for anything Studio loads from disk, and the uploaded asset for models and
+    /// animations, which it cannot. `None` for a model or animation that has not been uploaded.
+    pub fn ref_for(
+        &self,
+        ty: AssetType,
+        hash: &Hash,
+        ext: &str,
+        lockfile_entry: Option<&LockfileEntry>,
+    ) -> Option<AssetRef> {
+        if matches!(ty, AssetType::Model(_) | AssetType::Animation) {
+            lockfile_entry.map(Into::into)
+        } else {
+            Some(self.ref_for_hash(hash, ext))
+        }
+    }
+
     /// Reconstruct an `AssetRef` for a previously-synced hash without re-syncing.
     pub fn ref_for_hash(&self, hash: &Hash, ext: &str) -> AssetRef {
         let rel = RelativePathBuf::from(&hash.to_string()).with_extension(ext);
