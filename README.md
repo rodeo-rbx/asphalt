@@ -85,7 +85,20 @@ Will migrate your lockfile to the newest format, if there is one. See `asphalt m
 
 ### `asphalt upload`
 
-Uploads a single asset to Roblox. See `asphalt upload --help` for more information.
+Uploads a single asset to Roblox and prints its asset ID. See `asphalt upload --help` for more information.
+
+```bash
+asphalt upload car.rbxm --creator-type group --creator-id 1234
+```
+
+Pass `--asset-id` to upload the file as a new version of an existing asset instead of creating a new one. The asset keeps its ID, name and description, and the creator arguments are optional. Roblox decides which asset types can be updated this way; today that is models.
+
+```bash
+asphalt upload car.rbxm --asset-id 139145374182770
+# {"asset_id":139145374182770,"version":4}
+```
+
+An update prints the asset ID together with the version number of the uploaded content (`null` if Roblox does not report one). Pass `--json` to get the same output when creating an asset. `asphalt sync` does not use versions: it creates a new asset whenever a file's contents change.
 
 ## Configuration
 

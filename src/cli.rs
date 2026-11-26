@@ -91,13 +91,20 @@ pub struct UploadArgs {
     /// The file to upload.
     pub path: String,
 
-    /// The creator type of the asset.
+    /// Upload the file as a new version of this existing asset instead of creating a new asset.
+    ///
+    /// The asset keeps its ID, and the result is printed as JSON with the new version number
+    /// (see --json). Roblox decides which asset types can be updated this way.
     #[arg(long)]
-    pub creator_type: CreatorType,
+    pub asset_id: Option<u64>,
 
-    /// The creator ID of the asset.
-    #[arg(long)]
-    pub creator_id: u64,
+    /// The creator type of the asset. Required unless --asset-id is given.
+    #[arg(long, required_unless_present = "asset_id", requires = "creator_id")]
+    pub creator_type: Option<CreatorType>,
+
+    /// The creator ID of the asset. Required unless --asset-id is given.
+    #[arg(long, required_unless_present = "asset_id", requires = "creator_type")]
+    pub creator_id: Option<u64>,
 
     /// Your Open Cloud API key.
     #[arg(short, long, env = "ASPHALT_API_KEY", hide_env_values = true)]
@@ -108,11 +115,17 @@ pub struct UploadArgs {
     pub bleed: bool,
 
     /// Format the response as a link.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "json")]
     pub link: bool,
 
-    /// Provides Roblox with the amount of Robux that you are willing to spend on each non-free asset upload.
+    /// Print the asset ID and its version number as JSON: {"asset_id":123,"version":4}.
+    ///
+    /// This is the default with --asset-id. The version is null when Roblox does not report one.
     #[arg(long)]
+    pub json: bool,
+
+    /// Provides Roblox with the amount of Robux that you are willing to spend on each non-free asset upload.
+    #[arg(long, requires_all = ["creator_type", "creator_id"])]
     pub expected_price: Option<u32>,
 }
 

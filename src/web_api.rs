@@ -4,10 +4,10 @@ use crate::{
 };
 use anyhow::{Context, bail};
 use log::{debug, warn};
-use reqwest::{RequestBuilder, Response, StatusCode, multipart};
-use serde::{Deserialize, Serialize};
+use reqwest::{Method, RequestBuilder, Response, StatusCode, multipart};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{
-    env,
+    env, fmt,
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
@@ -21,10 +21,21 @@ const OPERATION_URL: &str = "https://apis.roblox.com/assets/v1/operations";
 const ASSET_DESCRIPTION: &str = "Uploaded by Asphalt";
 const MAX_DISPLAY_NAME_LENGTH: usize = 50;
 
+/// What Roblox reports once an upload has been processed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UploadedAsset {
+    pub asset_id: u64,
+    /// The version number of the uploaded content within its asset (1 for a new asset), when
+    /// Roblox reports one. This is the number `rbxassetid://<id>&version=<n>` takes, not the
+    /// global asset version ID that `InsertService:LoadAssetVersion` takes.
+    pub version: Option<u64>,
+}
+
 pub struct WebApiClient {
     inner: reqwest::Client,
     api_key: String,
-    creator: config::Creator,
+    /// Required to create an asset; optional when updating one.
+    creator: Option<config::Creator>,
     expected_price: Option<u32>,
     fatally_failed: AtomicBool,
     /// Shared rate limit state: when we can next make a request
@@ -32,7 +43,11 @@ pub struct WebApiClient {
 }
 
 impl WebApiClient {
-    pub fn new(api_key: String, creator: config::Creator, expected_price: Option<u32>) -> Self {
+    pub fn new(
+        api_key: String,
+        creator: Option<config::Creator>,
+        expected_price: Option<u32>,
+    ) -> Self {
         WebApiClient {
             inner: reqwest::Client::new(),
             api_key,
@@ -43,10 +58,19 @@ impl WebApiClient {
         }
     }
 
-    pub async fn upload(&self, asset: &Asset) -> anyhow::Result<u64> {
+    /// Creates a new asset from the file.
+    pub async fn upload(&self, asset: &Asset) -> anyhow::Result<UploadedAsset> {
         if env::var("ASPHALT_TEST").is_ok() {
-            return Ok(asset.hash.as_u64());
+            return Ok(UploadedAsset {
+                asset_id: asset.hash.as_u64(),
+                version: Some(1),
+            });
         }
+
+        let creator = self
+            .creator
+            .clone()
+            .context("A creator is required to create an asset")?;
 
         let file_name = asset.path.file_name().unwrap();
         let display_name = trim_display_name(file_name);
@@ -55,16 +79,82 @@ impl WebApiClient {
             display_name,
             asset_type: asset.ty,
             creation_context: CreationContext {
-                creator: self.creator.clone().into(),
+                creator: creator.into(),
                 expected_price: self.expected_price,
             },
             description: ASSET_DESCRIPTION,
         };
 
+        let response = self
+            .send_asset(
+                Method::POST,
+                UPLOAD_URL.to_owned(),
+                serde_json::to_string(&req)?,
+                asset,
+            )
+            .await?;
+
+        Ok(UploadedAsset {
+            asset_id: response
+                .asset_id
+                .context("Operation completed but returned no asset ID")?,
+            version: response.revision_id,
+        })
+    }
+
+    /// Uploads the file as a new version of an existing asset. The asset keeps its ID, name and
+    /// description. Roblox decides which asset types can be updated this way.
+    pub async fn update(&self, asset_id: u64, asset: &Asset) -> anyhow::Result<UploadedAsset> {
+        if env::var("ASPHALT_TEST").is_ok() {
+            return Ok(UploadedAsset {
+                asset_id,
+                version: Some(2),
+            });
+        }
+
+        let req = UpdateRequest {
+            asset_type: asset.ty,
+            asset_id: asset_id.to_string(),
+            creation_context: self.creator.clone().map(|creator| CreationContext {
+                creator: creator.into(),
+                expected_price: self.expected_price,
+            }),
+        };
+
+        let response = self
+            .send_asset(
+                Method::PATCH,
+                format!("{UPLOAD_URL}/{asset_id}"),
+                serde_json::to_string(&req)?,
+                asset,
+            )
+            .await?;
+
+        // By now the new version exists, so a response that names another asset is reported
+        // rather than passed on as if it were the asset that was asked for.
+        if let Some(reported) = response.asset_id
+            && reported != asset_id
+        {
+            bail!("Roblox reported asset {reported} for an update to asset {asset_id}");
+        }
+
+        Ok(UploadedAsset {
+            asset_id,
+            version: response.revision_id,
+        })
+    }
+
+    /// Sends the file with its request metadata, then waits for Roblox to finish processing it.
+    async fn send_asset(
+        &self,
+        method: Method,
+        url: String,
+        req_json: String,
+        asset: &Asset,
+    ) -> anyhow::Result<OperationResponse> {
         let len = asset.data.len() as u64;
-        let req_json = serde_json::to_string(&req)?;
-        let mime = req.asset_type.file_type().to_owned();
-        let name = file_name.to_owned();
+        let mime = asset.ty.file_type().to_owned();
+        let name = asset.path.file_name().unwrap().to_owned();
 
         let res = self
             .send_with_retry(|client| {
@@ -81,7 +171,7 @@ impl WebApiClient {
                     .part("fileContent", file_part);
 
                 client
-                    .post(UPLOAD_URL)
+                    .request(method.clone(), &url)
                     .header("x-api-key", &self.api_key)
                     .multipart(form)
             })
@@ -90,16 +180,16 @@ impl WebApiClient {
         let body = res.text().await?;
 
         let operation: Operation = serde_json::from_str(&body)?;
+        let operation_id = operation
+            .id()
+            .with_context(|| format!("Upload accepted but no operation ID in response: {body}"))?;
 
-        let id = self
-            .poll_operation(operation.operation_id, &self.api_key)
+        self.poll_operation(operation_id, &self.api_key)
             .await
-            .context("Failed to poll operation")?;
-
-        Ok(id)
+            .context("Failed to poll operation")
     }
 
-    async fn poll_operation(&self, id: String, api_key: &str) -> anyhow::Result<u64> {
+    async fn poll_operation(&self, id: String, api_key: &str) -> anyhow::Result<OperationResponse> {
         let mut delay = Duration::from_secs(1);
         const MAX_POLLS: u32 = 10;
 
@@ -117,11 +207,13 @@ impl WebApiClient {
             let operation: Operation = serde_json::from_str(&text)?;
 
             if operation.done {
-                if let Some(response) = operation.response {
-                    return Ok(response.asset_id.parse()?);
-                } else {
-                    bail!("Operation completed but no response provided");
+                if let Some(error) = operation.error {
+                    bail!("Roblox rejected the upload: {error}");
                 }
+
+                return operation
+                    .response
+                    .context("Operation completed but no response provided");
             }
 
             debug!("Operation not done yet");
@@ -189,7 +281,7 @@ impl WebApiClient {
 
                     continue;
                 }
-                StatusCode::OK => return Ok(res),
+                _ if status.is_success() => return Ok(res),
                 _ => {
                     let body = res.text().await?;
                     self.fatally_failed.store(true, Ordering::SeqCst);
@@ -207,6 +299,17 @@ struct Request {
     display_name: String,
     description: &'static str,
     creation_context: CreationContext,
+}
+
+/// The request for a new version of an existing asset. Roblox accepts it with or without the
+/// creation context.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateRequest {
+    asset_type: AssetType,
+    asset_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    creation_context: Option<CreationContext>,
 }
 
 #[derive(Serialize)]
@@ -251,15 +354,64 @@ struct GroupCreator {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Operation {
+    #[serde(default)]
     done: bool,
-    operation_id: String,
+    operation_id: Option<String>,
+    /// `operations/<id>`
+    path: Option<String>,
     response: Option<OperationResponse>,
+    error: Option<OperationError>,
+}
+
+impl Operation {
+    fn id(&self) -> Option<String> {
+        self.operation_id.clone().or_else(|| {
+            self.path
+                .as_deref()
+                .and_then(|path| path.strip_prefix("operations/"))
+                .map(str::to_owned)
+        })
+    }
 }
 
 #[derive(Deserialize)]
+struct OperationError {
+    code: Option<serde_json::Value>,
+    message: Option<String>,
+}
+
+impl fmt::Display for OperationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (&self.code, &self.message) {
+            (Some(code), Some(message)) => write!(f, "{message} (code {code})"),
+            (None, Some(message)) => write!(f, "{message}"),
+            (Some(code), None) => write!(f, "code {code}"),
+            (None, None) => write!(f, "no details given"),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OperationResponse {
-    asset_id: String,
+    #[serde(default, deserialize_with = "lenient_u64")]
+    asset_id: Option<u64>,
+    /// The version number of the uploaded content. Roblox documents it as an integer string.
+    #[serde(default, deserialize_with = "lenient_u64")]
+    revision_id: Option<u64>,
+}
+
+/// Reads an integer sent as a JSON string or number. Anything else reads as absent: by the time
+/// this response arrives the upload has gone through, so an unexpected shape must not turn it
+/// into a failure that invites a second upload.
+fn lenient_u64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
+    Ok(
+        match Option::<serde_json::Value>::deserialize(deserializer)? {
+            Some(serde_json::Value::String(text)) => text.parse().ok(),
+            Some(serde_json::Value::Number(number)) => number.as_u64(),
+            _ => None,
+        },
+    )
 }
 
 fn trim_display_name(name: &str) -> String {
@@ -269,5 +421,120 @@ fn trim_display_name(name: &str) -> String {
         full_path[start_index..].to_string()
     } else {
         full_path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::asset::ModelType;
+    use serde_json::json;
+
+    fn group(id: u64) -> config::Creator {
+        config::Creator {
+            ty: config::CreatorType::Group,
+            id,
+        }
+    }
+
+    #[test]
+    fn update_request_names_the_asset_and_nothing_else() {
+        let req = UpdateRequest {
+            asset_type: AssetType::Model(ModelType::Roblox),
+            asset_id: 139145374182770u64.to_string(),
+            creation_context: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&req).unwrap(),
+            json!({ "assetType": "Model", "assetId": "139145374182770" })
+        );
+    }
+
+    #[test]
+    fn update_request_carries_the_creator_when_given() {
+        let req = UpdateRequest {
+            asset_type: AssetType::Model(ModelType::Roblox),
+            asset_id: "1".to_string(),
+            creation_context: Some(CreationContext {
+                creator: group(5499489).into(),
+                expected_price: None,
+            }),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&req).unwrap(),
+            json!({
+                "assetType": "Model",
+                "assetId": "1",
+                "creationContext": {
+                    "creator": { "groupId": "5499489" },
+                    "expectedPrice": null,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn operation_id_comes_from_either_field() {
+        let by_id: Operation =
+            serde_json::from_value(json!({ "operationId": "abc", "done": false })).unwrap();
+        assert_eq!(by_id.id().as_deref(), Some("abc"));
+        assert!(!by_id.done);
+
+        let by_path: Operation =
+            serde_json::from_value(json!({ "path": "operations/def-123" })).unwrap();
+        assert_eq!(by_path.id().as_deref(), Some("def-123"));
+        assert!(!by_path.done);
+
+        let neither: Operation = serde_json::from_value(json!({ "done": false })).unwrap();
+        assert_eq!(neither.id(), None);
+    }
+
+    #[test]
+    fn finished_operation_reports_asset_and_version() {
+        let operation: Operation = serde_json::from_value(json!({
+            "path": "operations/abc",
+            "done": true,
+            "response": { "assetId": "139145374182770", "revisionId": "7" },
+        }))
+        .unwrap();
+
+        let response = operation.response.unwrap();
+        assert_eq!(response.asset_id, Some(139145374182770));
+        assert_eq!(response.revision_id, Some(7));
+    }
+
+    #[test]
+    fn version_is_optional_and_tolerates_other_shapes() {
+        let response = |value: serde_json::Value| -> OperationResponse {
+            serde_json::from_value(value).unwrap()
+        };
+
+        assert_eq!(response(json!({ "assetId": "5" })).revision_id, None);
+        assert_eq!(
+            response(json!({ "assetId": 5, "revisionId": 3 })).revision_id,
+            Some(3)
+        );
+        assert_eq!(
+            response(json!({ "assetId": "5", "revisionId": "three" })).revision_id,
+            None
+        );
+        assert_eq!(response(json!({ "assetId": 5 })).asset_id, Some(5));
+    }
+
+    #[test]
+    fn failed_operation_explains_itself() {
+        let operation: Operation = serde_json::from_value(json!({
+            "path": "operations/abc",
+            "done": true,
+            "error": { "code": 3, "message": "Asset type cannot be updated" },
+        }))
+        .unwrap();
+
+        assert_eq!(
+            operation.error.unwrap().to_string(),
+            "Asset type cannot be updated (code 3)"
+        );
     }
 }

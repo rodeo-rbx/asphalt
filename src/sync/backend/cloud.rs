@@ -21,7 +21,7 @@ impl Backend for Cloud {
                 params
                     .api_key
                     .context("An API key is required to use the Cloud backend")?,
-                params.creator,
+                Some(params.creator),
                 params.expected_price,
             ),
         })
@@ -37,7 +37,7 @@ impl Backend for Cloud {
         }
 
         match self.client.upload(asset).await {
-            Ok(id) => Ok(Some(AssetRef::Cloud(id))),
+            Ok(uploaded) => Ok(Some(AssetRef::Cloud(uploaded.asset_id))),
             Err(err) => bail!("Failed to upload asset: {err:?}"),
         }
     }
