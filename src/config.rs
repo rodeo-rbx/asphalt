@@ -93,10 +93,25 @@ pub struct Input {
     #[serde(default = "default_true")]
     pub bleed: bool,
 
+    /// What the generated code holds for each asset. Defaults to `uri`
+    #[serde(default)]
+    pub output_type: OutputType,
+
     /// A map of paths relative to the input path to existing assets on Roblox
     #[serde(default)]
     #[schemars(with = "HashMap<PathBuf, WebAsset>")]
     pub web: HashMap<RelativePathBuf, WebAsset>,
+}
+
+/// What the generated code holds for each asset
+#[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputType {
+    #[default]
+    /// A `rbxassetid://` URI, as a string or as `Content` when `codegen.content` is set
+    Uri,
+    /// The asset ID as a number, for APIs that take one, such as `AssetService:LoadAssetAsync`
+    Id,
 }
 
 /// An asset that exists on Roblox

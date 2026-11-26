@@ -1,6 +1,10 @@
 use assert_fs::{fixture::ChildPath, prelude::*};
 use common::Project;
-use predicates::{Predicate, prelude::predicate, str::contains};
+use predicates::{
+    Predicate,
+    prelude::{PredicateBooleanExt, predicate},
+    str::contains,
+};
 use std::{fs, path::Path};
 use toml::toml;
 
@@ -125,6 +129,61 @@ fn cloud_output_and_lockfile() {
 
         table.into()
     }));
+}
+
+#[test]
+fn cloud_output_type_id_generates_numbers() {
+    let project = Project::new();
+    project.write_config(toml! {
+        [creator]
+        type = "user"
+        id = 12345
+
+        [inputs.assets]
+        path = "input/**/*"
+        output_path = "output"
+        output_type = "id"
+
+        [inputs.assets.web]
+        "existing.png" = { id = 1234 }
+    });
+    let test_file = project.add_file("test1.png");
+
+    project
+        .run()
+        .args(["sync", "--api-key", "test"])
+        .assert()
+        .success();
+
+    let uploaded_id = hash_as_asset_id(&test_file);
+    project
+        .dir
+        .child("output/assets.luau")
+        .assert(contains(format!("[\"test1.png\"] = {uploaded_id},")))
+        .assert(contains("[\"existing.png\"] = 1234,"))
+        .assert(contains("rbxassetid://").not());
+}
+
+#[test]
+fn unknown_output_type_fails() {
+    let project = Project::new();
+    project.write_config(toml! {
+        [creator]
+        type = "user"
+        id = 12345
+
+        [inputs.assets]
+        path = "input/**/*"
+        output_path = "output"
+        output_type = "number"
+    });
+
+    project
+        .run()
+        .args(["sync", "debug"])
+        .assert()
+        .failure()
+        .stderr(contains("output_type"));
 }
 
 #[test]

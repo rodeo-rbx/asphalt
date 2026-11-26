@@ -161,6 +161,8 @@ output_path = "src/shared"
 	-	The directory path to output the generated code.
 -	`output_basename`: string
 	-	The filename of the generated files. Defaults to the input's name.
+-	`output_type`: "uri" | "id" (optional)
+	-	What the generated code holds for each asset. Defaults to `uri`, a `rbxassetid://` string (or `Content`, with `codegen.content`). Use `id` to generate the asset ID as a number for assets that are loaded by ID, such as models passed to `AssetService:LoadAssetAsync`. Every asset in an `id` input needs an uploaded asset ID, so images, audio and video in one cannot be synced to the `studio` target.
 -	`web`: map<string, [WebAsset](#webasset)>
 	-	A map of paths relative to the input path to existing assets on Roblox.
 - 	`bleed`: boolean (optional)
@@ -192,6 +194,7 @@ Make sure that you select an appropriate IP and that your API key is under the C
 - Animations (.rbxm, .rbxmx)
 	- Asphalt detects animations by looking to see if the saved class is a KeyframeSequence or a CurveAnimation. If it isn't, Asphalt will assume it is a Model.
 - Roblox Models (.rbxm, .rbxmx)
+	- Models are loaded by number rather than by URI. Set `output_type = "id"` on their input to generate numbers you can pass to `AssetService:LoadAssetAsync`.
 - 3D Models (.fbx, .gltf, .glb)
 	- Roblox does not offer control over the import settings through the web API. As such, this is not a route most should take. You should instead use the [3D Importer](https://create.roblox.com/docs/art/modeling/3d-importer) to upload these assets, then either sync them with Rojo or save them as Roblox model files.
 

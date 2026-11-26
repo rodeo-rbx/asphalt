@@ -191,7 +191,7 @@ async fn write_codegen(
     let base_name = input.output_basename.as_deref().unwrap_or(input_name);
 
     for lang in langs {
-        let node = codegen::create_node(source, &config.codegen);
+        let node = codegen::create_node(source, &config.codegen, input.output_type)?;
         let ext = match lang {
             codegen::Language::Luau => "luau",
             codegen::Language::TypeScript => "d.ts",

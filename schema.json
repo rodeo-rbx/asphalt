@@ -116,6 +116,10 @@
           "description": "The directory path to output the generated code",
           "type": "string"
         },
+        "output_type": {
+          "description": "What the generated code holds for each asset. Defaults to `uri`",
+          "$ref": "#/$defs/OutputType"
+        },
         "path": {
           "description": "A glob pattern to match files to upload",
           "type": "string"
@@ -131,6 +135,21 @@
       "required": [
         "path",
         "output_path"
+      ]
+    },
+    "OutputType": {
+      "description": "What the generated code holds for each asset",
+      "oneOf": [
+        {
+          "description": "A `rbxassetid://` URI, as a string or as `Content` when `codegen.content` is set",
+          "type": "string",
+          "const": "uri"
+        },
+        {
+          "description": "The asset ID as a number, for APIs that take one, such as `AssetService:LoadAssetAsync`",
+          "type": "string",
+          "const": "id"
+        }
       ]
     },
     "WebAsset": {
