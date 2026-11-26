@@ -1,5 +1,16 @@
 # Asphalt
 
+This is a fork of [jackTabsCode/asphalt](https://github.com/jackTabsCode/asphalt). It follows upstream and differs in these ways:
+
+<!-- Keep this list current. Add an entry when the fork gains a change that upstream lacks, and remove it once upstream has the change. -->
+
+-   **`asphalt sync studio --watch`** keeps running after the first sync and re-syncs files to Studio as they are added, changed or removed. It regenerates code only for the inputs that changed, and picks up edits to `asphalt.toml` without a restart.
+-   **`asphalt upload --asset-id <id>`** uploads the file as a new version of an existing asset instead of creating a new one, and prints the asset ID and version number as JSON. `--json` prints the same when creating an asset. See [`asphalt upload`](#asphalt-upload).
+-   **`asphalt upload` reads `ASPHALT_API_KEY`**, as `asphalt sync` does. Upstream's `upload` only accepts `--api-key`.
+-   **`output_type = "id"`** on an input generates asset IDs as numbers instead of `rbxassetid://` strings, for assets that are loaded by ID, such as models. See [Input](#input).
+-   **`asphalt sync --help` does not print your API key.** Upstream shows the value of `ASPHALT_API_KEY` in the help text when it is set.
+-   **Releases** are published from this repository and tagged `v<upstream version>-watch.<n>`, for example `v2.0.2-watch.2`. The options under [Installation](#installation) install upstream. To install this fork with Mise, pin it to one of those tags: `"ubi:rodeo-rbx/asphalt" = "v2.0.2-watch.2"`. This list describes `main`, which can be ahead of the latest release. Release builds for Apple silicon run on `macos-15`.
+
 Asphalt is a command line tool used to upload assets to Roblox and easily reference them in code.
 It's a modern alternative to [Tarmac](https://github.com/Roblox/Tarmac).
 
