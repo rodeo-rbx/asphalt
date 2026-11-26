@@ -100,8 +100,7 @@ pub struct UploadArgs {
     pub creator_id: u64,
 
     /// Your Open Cloud API key.
-    /// Can also be set with the ASPHALT_API_KEY environment variable.
-    #[arg(short, long)]
+    #[arg(short, long, env = "ASPHALT_API_KEY", hide_env_values = true)]
     pub api_key: Option<String>,
 
     /// Whether to alpha bleed if it's an image.

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_fs::{TempDir, fixture::ChildPath, prelude::*};
 use std::{fs, path::Path};
